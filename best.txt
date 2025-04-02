@@ -1,0 +1,2 @@
+SVM | {'C': 8.68, 'kernel': 'rbf', 'gamma': 'scale', 'probability': True}
+99.75
