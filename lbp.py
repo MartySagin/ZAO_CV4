@@ -132,11 +132,17 @@ def run_classifier(name, model, X_pca, y):
     print(confusion_matrix(y_test, y_pred))
 
 def test_lbp_configurations():
-    lbp_configs = [(8, 1), (16, 2), (24, 3)]
+    lbp_configs = [(8, 1), (16, 2), (24, 3), (32, 4), (40, 5), (48, 6), (56, 7), (64, 8), (72, 9), (80, 10)]
     summary_results = []
     print("\n🔍 Spouštím experiment s různými LBP konfiguracemi:")
     coords = load_parking_coordinates("parking_map_python.txt")
     images = get_test_image_paths("test_images_zao")
+
+    best_model = None
+    best_pca = None
+    best_scaler = None
+    best_acc = 0.0
+    best_config = None
 
     for P, R in lbp_configs:
         print(f"\n⚙️ Testuji LBP konfiguraci: P={P}, R={R}")
@@ -187,10 +193,76 @@ def test_lbp_configurations():
         print(f"⏱️ Čas zpracování: {elapsed:.2f} sekund")
         summary_results.append((P, R, acc, elapsed))
 
+        if acc > best_acc:
+            best_acc = acc
+            best_model = model
+            best_pca = pca
+            best_scaler = scaler
+            best_config = (P, R)
+
     print("\n📊 Shrnutí LBP konfigurací:")
     print("P\tR\tPřesnost (%)\tČas (s)")
     for P, R, acc, t in summary_results:
         print(f"{P}\t{R}\t{acc*100:.2f}\t\t{t:.2f}")
+
+    if best_model:
+        print(f"\n🏆 Nejlepší LBP konfigurace: P={best_config[0]}, R={best_config[1]}, Přesnost: {best_acc*100:.2f}%")
+        print("🖼️ Ukládám vizualizaci nejlepší konfigurace do složky 'output_visual'")
+
+        def best_feature_func(img):
+            gray_resized = cv2.resize(img, (64, 64))
+            lbp = local_binary_pattern(gray_resized, best_config[0], best_config[1], method="uniform")
+            lbp_hist, _ = np.histogram(lbp.ravel(), bins=np.arange(0, best_config[0] + 3), range=(0, best_config[0] + 2))
+            lbp_hist = lbp_hist.astype("float") / (lbp_hist.sum() + 1e-6)
+            hog_feat = hog(gray_resized, pixels_per_cell=(8, 8), cells_per_block=(2, 2),
+                           orientations=9, block_norm='L2-Hys', visualize=False, feature_vector=True)
+            mean = np.mean(gray_resized)
+            std = np.std(gray_resized)
+            return np.concatenate([lbp_hist, hog_feat, [mean, std]])
+
+        draw_results(best_model, best_pca, best_scaler, coords, feature_func=best_feature_func)
+        
+def draw_results(best_model, pca, scaler, coords, output_folder="output_visual", feature_func=None):
+    import shutil
+    if os.path.exists(output_folder):
+        shutil.rmtree(output_folder)
+    os.makedirs(output_folder)
+    image_paths = sorted(get_test_image_paths("test_images_zao"), key=lambda x: os.path.basename(x).lower())
+
+    for img_path in image_paths:
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        original = img.copy()
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gt_path = img_path.replace(".jpg", ".txt")
+        gt_labels = load_ground_truth(gt_path)
+        correct = 0
+        total = 0
+        for idx, coord in enumerate(coords):
+            patch = warp_parking_spot(gray, coord)
+            features = feature_func(patch) if feature_func else extract_features(patch)
+            features_scaled = scaler.transform([features])
+            features_pca = pca.transform(features_scaled)
+            pred = best_model.predict(features_pca)[0]
+            gt = gt_labels[idx] if idx < len(gt_labels) else 0
+            if pred == gt:
+                correct += 1
+            total += 1
+            if pred != gt:
+                color = (0, 165, 255)
+            elif pred == 0:
+                color = (0, 255, 0)
+            else:
+                color = (0, 0, 255)
+            pts = np.array([(int(float(coord[i])), int(float(coord[i + 1]))) for i in range(0, 8, 2)], np.int32)
+            pts = pts.reshape((-1, 1, 2))
+            cv2.polylines(original, [pts], isClosed=True, color=color, thickness=2)
+        accuracy = (correct / total) * 100 if total > 0 else 0
+        print(f"📸 {os.path.basename(img_path)}: {correct}/{total} správně | Úspěšnost: {accuracy:.2f}%")
+        out_name = os.path.basename(img_path)
+        cv2.imwrite(os.path.join(output_folder, out_name), original)
+
 
 def main():
     while True:
