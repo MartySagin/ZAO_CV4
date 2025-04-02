@@ -1,0 +1,10 @@
+# Base ----------------------------------------
+opencv-contrib-python
+matplotlib
+numpy
+tornado
+opencv-python
+scikit-image
+scikit-learn
+numpy
+pandas
